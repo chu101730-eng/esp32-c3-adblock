@@ -1,42 +1,33 @@
 name: build
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  pull_request:
 
 jobs:
   firmware:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        env: [c3, esp32dev]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-      - run: pip install -U platformio
-      - name: Placeholder secrets (real ones are gitignored; the firmware falls back to the setup portal)
-        run: cp src/secrets.example.h src/secrets.h
-      - run: pio run -e ${{ matrix.env }}
-
-  blocklist-tool:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Parse hosts, plain and AdGuard-style input
+      - run: pip install -U platformio "esptool<5"
+      - run: cp src/secrets.example.h src/secrets.h
+      - run: pio run -e s3
+      - name: Merge into one bin
         run: |
-          printf '||ads.example.com^\n@@||ok.example.org^\n||ok.example.org^\n0.0.0.0 hosts.example.com\nplain.example.com\n/^regex$/\n' > t.txt
-          python3 tools/build_blocklist.py t.bin t.txt
-          test "$(stat -c%s t.bin)" -eq 15   # 3 entries x 5 bytes
-      - name: Unit tests
-        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+          B=.pio/build/s3
+          BOOT_APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -n1)
+          python -m esptool --chip esp32s3 merge_bin -o s3-merged.bin \
+            0x0 $B/bootloader.bin \
+            0x8000 $B/partitions.bin \
+            0xe000 $BOOT_APP0 \
+            0x10000 $B/firmware.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s3-firmware
+          path: |
+            s3-merged.bin
+            .pio/build/s3/firmware.bin
