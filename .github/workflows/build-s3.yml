@@ -1,0 +1,28 @@
+name: Build S3
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install platformio "esptool<5"
+      - run: cp -n src/secrets.example.h src/secrets.h
+      - run: pio run -e s3
+      - name: Merge into one bin
+        run: |
+          B=.pio/build/s3
+          esptool.py --chip esp32s3 merge_bin -o s3-merged.bin \
+            0x0 $B/bootloader.bin \
+            0x8000 $B/partitions.bin \
+            0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0x10000 $B/firmware.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s3-firmware
+          path: |
+            s3-merged.bin
+            .pio/build/s3/firmware.bin
